@@ -65,10 +65,6 @@ def f(data, h2t, metrics):
             h,r,t = line.split('\t')
             t = t.replace('\n','')
             if (h,r) in h2t:
-                # for tr, sr in h2t[(h,r)]:
-                    # if tr == t:
-                    #     p += sr / sum(tup[1] for tup in h2t[(h,r)])
-                # get preds list
                 preds = torch.tensor([g[1] for g in h2t[(h,r)]]).unsqueeze(0)
                 target = torch.tensor([1.0 if g[0] == t else 0.0 for g in h2t[(h,r)]]).unsqueeze(0).bool()
                 metrics.update(preds, target)
@@ -92,11 +88,18 @@ def i(data, t2h):
             h,r,t = line.split('\t')
             t = t.replace('\n','')
             if (t,r) in t2h:
-                for hr, sr in t2h[(t,r)]:
-                    if hr == h:
-                        p += sr / sum(tup[1] for tup in t2h[(t,r)])
-        p /= len(lines)
-    print(p)
+                preds = torch.tensor([g[1] for g in h2t[(h,r)]]).unsqueeze(0)
+                target = torch.tensor([1.0 if g[0] == t else 0.0 for g in h2t[(h,r)]]).unsqueeze(0).bool()
+                metrics.update(preds, target)
+                scores = metrics.compute()
+                hits_at_1 += scores["hits_at_1"].item() / len(lines)
+                hits_at_3 += scores["hits_at_3"].item() / len(lines)
+                hits_at_5 += scores["hits_at_5"].item() / len(lines)
+                hits_at_10 += scores["hits_at_10"].item() / len(lines)
+    print(f"Hits@1: {hits_at_1}")
+    print(f"Hits@3: {hits_at_3}")
+    print(f"Hits@5: {hits_at_5}")
+    print(f"Hits@10: {hits_at_10}")
 
 
 def ff(data, h2t, t2e, t2r):
