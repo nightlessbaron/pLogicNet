@@ -1,0 +1,4 @@
+data/*
+record/*
+__pycache__/
+kge/__pycache__/

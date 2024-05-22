@@ -3,7 +3,7 @@ import os
 import datetime
 from utils import augment_triplet, evaluate
 
-dataset = 'data/FB15k'
+dataset = 'data/kinship'
 path = './record'
 
 iterations = 2
@@ -19,6 +19,9 @@ kge_iters = 10000
 kge_tbatch = 16
 kge_reg = 0.0
 kge_topk = 100
+
+if dataset.split('/')[-1] in ['kinship', 'umls', 'nations']:
+    kge_batch, kge_neg, kge_dim, kge_gamma, kge_alpha, kge_lr, kge_iters, kge_tbatch = 512, 1024, 500, 6.0, 0.5, 0.00005, 80000, 8
 
 if kge_model == 'RotatE':
     if dataset.split('/')[-1] == 'FB15k':
@@ -73,6 +76,10 @@ if dataset.split('/')[-1] == 'wn18':
     mln_threshold_of_triplet = 0.5
     weight = 100
 if dataset.split('/')[-1] == 'wn18rr':
+    mln_threshold_of_rule = 0.1
+    mln_threshold_of_triplet = 0.5
+    weight = 100
+if dataset.split('/')[-1] in ['kinship', 'umls', 'nations']:
     mln_threshold_of_rule = 0.1
     mln_threshold_of_triplet = 0.5
     weight = 100
@@ -144,7 +151,7 @@ for k in range(iterations):
     os.system('cp {}/hidden.txt {}/hidden.txt'.format(path, workspace_path))
     os.system(cmd_kge(workspace_path, kge_model))
 
-    os.system(cmd_mln(path, workspace_path, preprocessing=False))
+    os.system(cmd_mln(path, workspace_path, preprocessing=True))
     augment_triplet('{}/pred_mln.txt'.format(workspace_path), '{}/train.txt'.format(path), '{}/train_augmented.txt'.format(workspace_path), mln_threshold_of_triplet)
     os.system('cp {}/train_augmented.txt {}/train_augmented.txt'.format(workspace_path, path))
 

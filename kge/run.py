@@ -239,6 +239,23 @@ def main(args):
     
     #All true triples
     all_true_triples = train_original_triples + valid_triples + test_triples
+
+    # complete set of triplets
+    entity_list, relations_list = [], []
+    with open(os.path.join(args.data_path, "entities.dict"), "r") as f:
+        data = f.readlines()
+        for line in data:
+            entity_list.append(line.split("\t"))
+    with open(os.path.join(args.data_path, "relations.dict"), "r") as f:
+        data = f.readlines()
+        for line in data:
+            relations_list.append(line.split("\t"))
+    complete_triples = []
+    for rid, relation in relations_list:
+        for e1id, entity_1 in entity_list:
+            for e2id, entity_2 in entity_list:
+                if entity_1 not in ["pad", "sep"] or entity_2 not in ["pad", "sep"]:
+                    complete_triples.append((e1id, rid, e2id))
     
     kge_model = KGEModel(
         model_name=args.model,
@@ -266,9 +283,9 @@ def main(args):
             num_workers=max(1, args.cpu_num//2),
             collate_fn=TrainDataset.collate_fn
         )
-        
+        # TODO: original was tail-batch
         train_dataloader_tail = DataLoader(
-            TrainDataset(train_triples, nentity, nrelation, args.negative_sample_size, 'tail-batch'), 
+            TrainDataset(train_triples, nentity, nrelation, args.negative_sample_size, 'head-batch'), 
             batch_size=args.batch_size,
             shuffle=True, 
             num_workers=max(1, args.cpu_num//2),
@@ -398,7 +415,8 @@ def main(args):
     
     if args.do_test:
         logging.info('Evaluating on Test Dataset...')
-        metrics, preds = kge_model.test_step(kge_model, test_triples, all_true_triples, args)
+        # TODO: original was test_triples
+        metrics, preds = kge_model.test_step(kge_model, complete_triples, all_true_triples, args)
         log_metrics('Test', step, metrics)
         
         # --------------------------------------------------
