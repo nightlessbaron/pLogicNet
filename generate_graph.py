@@ -73,33 +73,37 @@ def f(data, h2t, metrics):
                 hits_at_3 += scores["hits_at_3"].item() / len(lines)
                 hits_at_5 += scores["hits_at_5"].item() / len(lines)
                 hits_at_10 += scores["hits_at_10"].item() / len(lines)
+    print("Query Type -- f")
     print(f"Hits@1: {hits_at_1}")
     print(f"Hits@3: {hits_at_3}")
     print(f"Hits@5: {hits_at_5}")
     print(f"Hits@10: {hits_at_10}")
+    print("*"*25)
 
 
-def i(data, t2h):
+def i(data, t2h, metrics):
     test_data_path = f"data/{data}/test.txt"
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        p = 0
+        hits_at_1, hits_at_3, hits_at_5, hits_at_10 = 0,0,0,0
         for line in lines:
             h,r,t = line.split('\t')
             t = t.replace('\n','')
             if (t,r) in t2h:
-                preds = torch.tensor([g[1] for g in h2t[(h,r)]]).unsqueeze(0)
-                target = torch.tensor([1.0 if g[0] == t else 0.0 for g in h2t[(h,r)]]).unsqueeze(0).bool()
+                preds = torch.tensor([g[1] for g in t2h[(t,r)]]).unsqueeze(0)
+                target = torch.tensor([1.0 if g[0] == t else 0.0 for g in t2h[(t,r)]]).unsqueeze(0).bool()
                 metrics.update(preds, target)
                 scores = metrics.compute()
                 hits_at_1 += scores["hits_at_1"].item() / len(lines)
                 hits_at_3 += scores["hits_at_3"].item() / len(lines)
                 hits_at_5 += scores["hits_at_5"].item() / len(lines)
                 hits_at_10 += scores["hits_at_10"].item() / len(lines)
+    print("Query Type -- i")
     print(f"Hits@1: {hits_at_1}")
     print(f"Hits@3: {hits_at_3}")
     print(f"Hits@5: {hits_at_5}")
     print(f"Hits@10: {hits_at_10}")
+    print("*"*25)
 
 
 def ff(data, h2t, t2e, t2r):
@@ -264,7 +268,7 @@ if __name__ == "__main__":
     # --------
 
     f(data, h2t, metrics)
-    i(data, t2h)
+    i(data, t2h, metrics)
 
     # --------
 
