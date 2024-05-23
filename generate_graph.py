@@ -3,45 +3,39 @@ import numpy as np
 import torch
 from metrics import RetrievalMetrics
 
-def generate_graph(data):
-    with open(f"record/{data}_head/0/pred_kge.txt", "r") as f:
+def generate_graph(data, t2e):
+    # with open(f"record/{data}_head_v2/0/pred_kge.txt", "r") as f:
+    with open("record/2024-05-23_11:30:32.881053/0/pred_kge.txt", "r") as f:
         lines = f.readlines()
-        G = set()
+        G = dict()
         i = 0
         while i < len(lines):
-            h,r,t,m,rank = lines[i].split('\t')
-            probs = lines[i+1].split(' ')[:-1]
+            h,r,t,m,rank = lines[i].replace('\n', '').split('\t')
+            probs = lines[i+1].replace(' \n', '').split(' ')
+            assert len(probs) == len(t2e), f"Length mismatch {len(probs)} != {len(t2e)}"
+            
             if m == "h":
-                for prob in probs:
-                    rel, score = prob.split(":")
-                    if float(score) > 0.5:
-                        G.add((rel, r, t, float(score)))
+                if (m, t, r) not in G and r not in ["sep", "pad"] and t not in ["sep", "pad"]:
+                    G[(m, t, r)] = []
+                    for prob in probs:
+                        rel, score = prob.split(":")
+                        if rel in ["sep", "pad"] or h in ["sep", "pad"]:
+                            continue
+                        G[(m, t, r)].append((rel, float(score)))
+                    assert len(G[(m, t, r)]) == len(t2e)-2, f"Length mismatch: {len(G[(m, t, r)])} != {len(t2e)-2}, t: {t}, r: {r}"
+            elif m == "t":
+                if (m, h, r) not in G and r not in ["sep", "pad"] and h not in ["sep", "pad"]:
+                    G[(m, h, r)] = []
+                    for prob in probs:
+                        rel, score = prob.split(":")
+                        if rel in ["sep", "pad"] or h in ["sep", "pad"]:
+                            continue
+                        G[(m, h, r)].append((rel, float(score)))
+                    assert len(G[(m, h, r)]) == len(t2e)-2, f"Length mismatch: {len(G[(m, h, r)])} != {len(t2e)-2}, h: {h}, r: {r}"
             else:
-                for prob in probs:
-                    rel, score = prob.split(":")
-                    if float(score) > 0.5:
-                        G.add((h, r, rel, float(score)))
+                raise ValueError(f"Invalid mode: {m}")
             i += 2
         return G
-
-def getTailEntity(G):
-    h2t = {}
-    for g in G:
-        h,r,t,s = g
-        if (h,r) not in h2t:
-            h2t[(h,r)] = []
-        h2t[(h,r)].append((t,s))
-    return h2t
-
-
-def getHeadEntity(G):
-    t2h = {}
-    for g in G:
-        h,r,t,s = g
-        if (t,r) not in t2h:
-            t2h[(t,r)] = []
-        t2h[(t,r)].append((h,s))
-    return t2h
 
 
 def getDict(data, typ="entities"):
@@ -55,64 +49,80 @@ def getDict(data, typ="entities"):
             de[e] = int(i)
     return ed, de
 
-# TODO: remove if conditions
-def f(data, h2t, metrics):
-    test_data_path = f"data/{data}/test.txt"
+
+def f(data, G, t2e, t2r, metrics):
+    test_data_path = f"data/{data}/fol_data/f/data.jsonl"
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        hits_at_1, hits_at_3, hits_at_5, hits_at_10 = 0,0,0,0
+
         for line in lines:
-            h,r,t = line.split('\t')
-            t = t.replace('\n','')
-            if (h,r) in h2t:
-                preds = torch.tensor([g[1] for g in h2t[(h,r)]]).unsqueeze(0)
-                target = torch.tensor([1.0 if g[0] == t else 0.0 for g in h2t[(h,r)]]).unsqueeze(0).bool()
-                metrics.update(preds, target)
-                scores = metrics.compute()
-                hits_at_1 += scores["hits_at_1"].item() / len(lines)
-                hits_at_3 += scores["hits_at_3"].item() / len(lines)
-                hits_at_5 += scores["hits_at_5"].item() / len(lines)
-                hits_at_10 += scores["hits_at_10"].item() / len(lines)
-    print("Query Type -- f")
-    print(f"Hits@1: {hits_at_1}")
-    print(f"Hits@3: {hits_at_3}")
-    print(f"Hits@5: {hits_at_5}")
-    print(f"Hits@10: {hits_at_10}")
+            json_line = json.loads(line)
+            r = t2r[json_line["p"][0]]
+            inputs = [i[0] for i in json_line["o"]]
+            out_v = [[t2e[i[0]] for i in s] for s in json_line["v"]]
+            out_c = [[t2e[i[0]] for i in s] for s in json_line["c"]]
+            outputs = []
+            for v,c in zip(out_v, out_c):
+                outputs.append(v+c)
+            preds = []
+            target = []
+            for e, h in enumerate(inputs):
+                h = t2e[h]
+                preds.append(torch.tensor([g[1] for g in G[("t",h,r)]]))
+                target.append(torch.tensor([1.0 if g[0] in outputs[e] else 0.0 for g in G[("t",h,r)]]).bool())
+            stacked_preds = torch.stack(preds)
+            stacked_targets = torch.stack(target)
+            assert stacked_preds.shape == stacked_targets.shape
+            assert stacked_preds.shape == (len(inputs), len(t2e)-2), f"Shape mismatch: {stacked_preds.shape} != {(len(inputs), len(t2e)-2)}"
+            metrics.update(stacked_preds, stacked_targets)
+            scores = metrics.compute()
+
+    print("Query Type -- f (All metrics)")
+    for key, value in scores.items():
+        print(f"{key}: {value}")
     print("*"*25)
 
 
-def i(data, t2h, metrics):
-    test_data_path = f"data/{data}/test.txt"
+def i(data, G, t2e, t2r, metrics):
+    test_data_path = f"data/{data}/fol_data/i/data.jsonl"
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        hits_at_1, hits_at_3, hits_at_5, hits_at_10 = 0,0,0,0
+
         for line in lines:
-            h,r,t = line.split('\t')
-            t = t.replace('\n','')
-            if (t,r) in t2h:
-                preds = torch.tensor([g[1] for g in t2h[(t,r)]]).unsqueeze(0)
-                target = torch.tensor([1.0 if g[0] == t else 0.0 for g in t2h[(t,r)]]).unsqueeze(0).bool()
-                metrics.update(preds, target)
-                scores = metrics.compute()
-                hits_at_1 += scores["hits_at_1"].item() / len(lines)
-                hits_at_3 += scores["hits_at_3"].item() / len(lines)
-                hits_at_5 += scores["hits_at_5"].item() / len(lines)
-                hits_at_10 += scores["hits_at_10"].item() / len(lines)
+            json_line = json.loads(line)
+            r = t2r[json_line["p"][0]]
+            inputs = [i[0] for i in json_line["o"]]
+            out_v = [[t2e[i[0]] for i in s] for s in json_line["v"]]
+            out_c = [[t2e[i[0]] for i in s] for s in json_line["c"]]
+            outputs = []
+            for v,c in zip(out_v, out_c):
+                outputs.append(v+c)
+            preds = []
+            target = []
+            for e, t in enumerate(inputs):
+                t = t2e[t]
+                preds.append(torch.tensor([g[1] for g in G[("h",t,r)]]))
+                target.append(torch.tensor([1.0 if g[0] in outputs[e] else 0.0 for g in G[("h",t,r)]]).bool())
+            stacked_preds = torch.stack(preds)
+            stacked_targets = torch.stack(target)
+            assert stacked_preds.shape == stacked_targets.shape
+            assert stacked_preds.shape == (len(inputs), len(t2e)-2), f"Shape mismatch: {stacked_preds.shape} != {(len(inputs), len(t2e)-2)}"
+            metrics.update(stacked_preds, stacked_targets)
+            scores = metrics.compute()
+
     print("Query Type -- i")
-    print(f"Hits@1: {hits_at_1}")
-    print(f"Hits@3: {hits_at_3}")
-    print(f"Hits@5: {hits_at_5}")
-    print(f"Hits@10: {hits_at_10}")
+    print(f"All metrics --->")
+    for key, value in scores.items():
+        print(f"{key}: {value}")
     print("*"*25)
 
 
-def ff(data, h2t, t2e, t2r):
+def ff(data, G, t2e, e2t, t2r, metrics):
     test_data_path = f"data/{data}/fol_data/ff/data.jsonl"
-    m1 = np.zeros((len(t2e), len(t2e)))
+
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        p = 0
-        count = 0
+
         for line in lines:
             json_line = json.loads(line)
             p1, p2 = json_line["p"]
@@ -121,158 +131,183 @@ def ff(data, h2t, t2e, t2r):
             # out_t = [[t2e[i[0]] for i in s] for s in json_line["t"]]
             out_v = [[t2e[i[0]] for i in s] for s in json_line["v"]]
             out_c = [[t2e[i[0]] for i in s] for s in json_line["c"]]
-            out = []
-            # for t,v,c in zip(out_t, out_v, out_c):
-            #     out.append(t + v + c)
+            outputs = []
             for v,c in zip(out_v, out_c):
-                out.append(v+c)
+                outputs.append(v+c)
+            matrix_r1 = []
+            target = []
+            for j, h in enumerate(inputs):
+                matrix_r1.append(torch.tensor([g[1] for g in G[("t",h,p1)]]))
+                target.append(torch.tensor([1.0 if g[0] in outputs[j] else 0.0 for g in G[("t",h,p1)]]).bool())
+            matrix_r1 = torch.stack(matrix_r1)
+            stacked_targets = torch.stack(target)
 
-            # 
-            
-            for e,i in enumerate(inputs):
-                count += 1
-                h,r = i, p1
-                if (h,r) in h2t:
-                    for tr, sr in h2t[(h,r)]:
-                        p_curr = sr / sum(tup[1] for tup in h2t[(h,r)])
-                        n_h, n_r = tr, p2
-                        if (n_h,n_r) in h2t:
-                            p_new = 0
-                            for tx, sx in h2t[(n_h,n_r)]:
-                                if tx in out[e]:
-                                    p_new += sx / sum(tup[1] for tup in h2t[(n_h,n_r)])
-                        p += p_curr * p_new
-        p /= count
-    print(p)
+            matrix_r2 = []
+            for e in e2t:
+                if e not in ["pad", "sep"]:
+                    matrix_r2.append(torch.tensor([g[1] for g in G[("t",e,p2)]]))
+            matrix_r2 = torch.stack(matrix_r2)
+
+            preds = torch.matmul(matrix_r1, matrix_r2.T)
+            assert preds.shape == stacked_targets.shape
+            assert preds.shape == (len(inputs), len(t2e)-2), f"Shape mismatch: {preds.shape} != {(len(inputs), len(t2e)-2)}"
+            metrics.update(preds, stacked_targets)
+            scores = metrics.compute()
+    
+    print("Query Type -- ff")
+    print(f"All metrics --->")
+    for key, value in scores.items():
+        print(f"{key}: {value}")
+    print("*"*25)
 
 
-def fi(data, h2t, t2h, t2e, t2r):
-    test_data_path = f"data/{data}/fol_data/ff/data.jsonl"
+def fi(data, G, t2e, e2t, t2r, metrics):
+    test_data_path = f"data/{data}/fol_data/fi/data.jsonl"
+
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        p = 0
-        count = 0
+
         for line in lines:
             json_line = json.loads(line)
             p1, p2 = json_line["p"]
             p1, p2 = t2r[p1], t2r[p2]
             inputs = [t2e[i[0]] for i in json_line["o"]]
-            # out_t = [[t2e[i[0]] for i in s] for s in json_line["t"]]
             out_v = [[t2e[i[0]] for i in s] for s in json_line["v"]]
             out_c = [[t2e[i[0]] for i in s] for s in json_line["c"]]
-            out = []
-            # for t,v,c in zip(out_t, out_v, out_c):
-            #     out.append(t + v + c)
+            outputs = []
             for v,c in zip(out_v, out_c):
-                out.append(v+c)
-            
-            for e,i in enumerate(inputs):
-                count += 1
-                h,r = i, p1
-                if (h,r) in h2t:
-                    for tr, sr in h2t[(h,r)]:
-                        p_curr = sr / sum(tup[1] for tup in h2t[(h,r)])
-                        n_t, n_r = tr, p2
-                        if (n_t,n_r) in t2h:
-                            p_new = 0
-                            for hx, sx in t2h[(n_t,n_r)]:
-                                if hx in out[e]:
-                                    p_new += sx / sum(tup[1] for tup in t2h[(n_t,n_r)])
-                        p += p_curr * p_new
-        p /= count
-    print(p)
+                outputs.append(v+c)
+            matrix_r1 = []
+            target = []
+            for j, h in enumerate(inputs):
+                matrix_r1.append(torch.tensor([g[1] for g in G[("t",h,p1)]]))
+                target.append(torch.tensor([1.0 if g[0] in outputs[j] else 0.0 for g in G[("t",h,p1)]]).bool())
+            matrix_r1 = torch.stack(matrix_r1)
+            stacked_targets = torch.stack(target)
+
+            matrix_r2 = []
+            for e in e2t:
+                if e not in ["pad", "sep"]:
+                    matrix_r2.append(torch.tensor([g[1] for g in G[("h",e,p2)]]))
+            matrix_r2 = torch.stack(matrix_r2)
+
+            preds = torch.matmul(matrix_r1, matrix_r2.T)
+            assert preds.shape == stacked_targets.shape
+            assert preds.shape == (len(inputs), len(t2e)-2), f"Shape mismatch: {preds.shape} != {(len(inputs), len(t2e)-2)}"
+            metrics.update(preds, stacked_targets)
+            scores = metrics.compute()
+    
+    print("Query Type -- fi")
+    print(f"All metrics --->")
+    for key, value in scores.items():
+        print(f"{key}: {value}")
+    print("*"*25)
 
 
-def If(data, h2t, t2h, t2e, t2r):
-    test_data_path = f"data/{data}/fol_data/ff/data.jsonl"
+def If(data, G, t2e, e2t, t2r, metrics):
+    test_data_path = f"data/{data}/fol_data/if/data.jsonl"
+
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        p = 0
-        count = 0
+
         for line in lines:
             json_line = json.loads(line)
             p1, p2 = json_line["p"]
             p1, p2 = t2r[p1], t2r[p2]
             inputs = [t2e[i[0]] for i in json_line["o"]]
-            # out_t = [[t2e[i[0]] for i in s] for s in json_line["t"]]
             out_v = [[t2e[i[0]] for i in s] for s in json_line["v"]]
             out_c = [[t2e[i[0]] for i in s] for s in json_line["c"]]
-            out = []
-            # for t,v,c in zip(out_t, out_v, out_c):
-            #     out.append(t + v + c)
+            outputs = []
             for v,c in zip(out_v, out_c):
-                out.append(v+c)
-            
-            for e,i in enumerate(inputs):
-                count += 1
-                t,r = i, p1
-                if (t,r) in t2h:
-                    for hr, sr in t2h[(t,r)]:
-                        p_curr = sr / sum(tup[1] for tup in t2h[(t,r)])
-                        n_h, n_r = hr, p2
-                        if (n_h,n_r) in h2t:
-                            p_new = 0
-                            for tx, sx in h2t[(n_h,n_r)]:
-                                if tx in out[e]:
-                                    p_new += sx / sum(tup[1] for tup in h2t[(n_h,n_r)])
-                        p += p_curr * p_new
-        p /= count
-    print(p)
+                outputs.append(v+c)
+            matrix_r1 = []
+            target = []
+            for j, t in enumerate(inputs):
+                matrix_r1.append(torch.tensor([g[1] for g in G[("h",t,p1)]]))
+                target.append(torch.tensor([1.0 if g[0] in outputs[j] else 0.0 for g in G[("h",t,p1)]]).bool())
+            matrix_r1 = torch.stack(matrix_r1)
+            stacked_targets = torch.stack(target)
 
+            matrix_r2 = []
+            for e in e2t:
+                if e not in ["pad", "sep"]:
+                    matrix_r2.append(torch.tensor([g[1] for g in G[("t",e,p2)]]))
+            matrix_r2 = torch.stack(matrix_r2)
 
-def ii(data, h2t, t2h, t2e, t2r):
-    test_data_path = f"data/{data}/fol_data/ff/data.jsonl"
+            preds = torch.matmul(matrix_r1, matrix_r2.T)
+            assert preds.shape == stacked_targets.shape
+            assert preds.shape == (len(inputs), len(t2e)-2), f"Shape mismatch: {preds.shape} != {(len(inputs), len(t2e)-2)}"
+            metrics.update(preds, stacked_targets)
+            scores = metrics.compute()
+    
+    print("Query Type -- if")
+    print(f"All metrics --->")
+    for key, value in scores.items():
+        print(f"{key}: {value}")
+    print("*"*25)
+
+def ii(data, G, t2e, e2t, t2r, metrics):
+    test_data_path = f"data/{data}/fol_data/ii/data.jsonl"
     with open(test_data_path, "r") as f:
         lines = f.readlines()
-        p = 0
-        count = 0
+
         for line in lines:
             json_line = json.loads(line)
             p1, p2 = json_line["p"]
             p1, p2 = t2r[p1], t2r[p2]
+            
             inputs = [t2e[i[0]] for i in json_line["o"]]
-            # out_t = [[t2e[i[0]] for i in s] for s in json_line["t"]]
             out_v = [[t2e[i[0]] for i in s] for s in json_line["v"]]
             out_c = [[t2e[i[0]] for i in s] for s in json_line["c"]]
-            out = []
-            # for t,v,c in zip(out_t, out_v, out_c):
-            #     out.append(t + v + c)
+            outputs = []
             for v,c in zip(out_v, out_c):
-                out.append(v+c)
-            
-            for e,i in enumerate(inputs):
-                count += 1
-                t,r = i, p1
-                if (t,r) in t2h:
-                    for hr, sr in t2h[(t,r)]:
-                        p_curr = sr / sum(tup[1] for tup in t2h[(t,r)])
-                        n_t, n_r = hr, p2
-                        if (n_t,n_r) in t2h:
-                            p_new = 0
-                            for hx, sx in t2h[(n_t,n_r)]:
-                                if hx in out[e]:
-                                    p_new += sx / sum(tup[1] for tup in t2h[(n_t,n_r)])
-                        p += p_curr * p_new
-        p /= count
-    print(p)
+                outputs.append(v+c)
+            matrix_r1 = []
+            target = []
+            for j, t in enumerate(inputs):
+                matrix_r1.append(torch.tensor([g[1] for g in G[("h",t,p1)]]))
+                target.append(torch.tensor([1.0 if g[0] in outputs[j] else 0.0 for g in G[("h",t,p1)]]).bool())
+            matrix_r1 = torch.stack(matrix_r1)
+            stacked_targets = torch.stack(target)
+
+            matrix_r2 = []
+            for e in e2t:
+                if e not in ["pad", "sep"]:
+                    matrix_r2.append(torch.tensor([g[1] for g in G[("h",e,p2)]]))
+            matrix_r2 = torch.stack(matrix_r2)
+
+            preds = torch.matmul(matrix_r1, matrix_r2.T)
+            assert preds.shape == stacked_targets.shape
+            assert preds.shape == (len(inputs), len(t2e)-2), f"Shape mismatch: {preds.shape} != {(len(inputs), len(t2e)-2)}"
+            metrics.update(preds, stacked_targets)
+            scores = metrics.compute()
+    
+    print("Query Type -- ii")
+    print(f"All metrics --->")
+    for key, value in scores.items():
+        print(f"{key}: {value}")
+    print("*"*25)
 
 if __name__ == "__main__":
-    data = "umls"
-    G = generate_graph(data)
-    metrics = RetrievalMetrics(ks_for_hits=[1,3,5,10])
+    data = "kinship"
+
     t2e, e2t = getDict(data, "entities")
     t2r, r2t = getDict(data, "relations")
-    h2t = getTailEntity(G)
-    t2h = getHeadEntity(G)
+    metrics = RetrievalMetrics(ks_for_hits=[1,3,5,10])
+
+    G = generate_graph(data, t2e)
+    graph_size = sum([len(G[i]) for i in G])
+    expected_size = (len(t2e)-2)**2 * len(t2r) * 2
+    assert graph_size == expected_size, f"Something is wrong with the graph generation {graph_size} != {expected_size}."
 
     # --------
 
-    f(data, h2t, metrics)
-    i(data, t2h, metrics)
+    f(data, G, t2e, t2r, metrics)
+    i(data, G, t2e, t2r, metrics)
 
     # --------
 
-    ff(data, h2t, t2e, t2r)
-    fi(data, h2t, t2h, t2e, t2r)
-    If(data, h2t, t2h, t2e, t2r)
-    ii(data, h2t, t2h, t2e, t2r)
+    ff(data, G, t2e, e2t, t2r, metrics)
+    fi(data, G, t2e, e2t, t2r, metrics)
+    If(data, G, t2e, e2t, t2r, metrics)
+    ii(data, G, t2e, e2t, t2r, metrics)

@@ -255,7 +255,7 @@ def main(args):
         for e1id, entity_1 in entity_list:
             for e2id, entity_2 in entity_list:
                 if entity_1 not in ["pad", "sep"] or entity_2 not in ["pad", "sep"]:
-                    complete_triples.append((e1id, rid, e2id))
+                    complete_triples.append((int(e1id), int(rid), int(e2id)))
     
     kge_model = KGEModel(
         model_name=args.model,
@@ -309,6 +309,7 @@ def main(args):
         # Restore model from checkpoint directory
         logging.info('Loading checkpoint %s...' % args.init_checkpoint)
         checkpoint = torch.load(os.path.join(args.init_checkpoint, 'checkpoint'))
+        print(checkpoint.keys())
         init_step = checkpoint['step']
         kge_model.load_state_dict(checkpoint['model_state_dict'])
         if args.do_train:
@@ -316,14 +317,15 @@ def main(args):
             warm_up_steps = checkpoint['warm_up_steps']
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     else:
-        logging.info('Ramdomly Initializing %s Model...' % args.model)
+        logging.info('Randomly Initializing %s Model...' % args.model)
         init_step = 0
     
     step = init_step
     
     logging.info('Start Training...')
     logging.info('init_step = %d' % init_step)
-    logging.info('learning_rate = %d' % current_learning_rate)
+    if args.do_train:
+        logging.info('learning_rate = %d' % current_learning_rate)
     logging.info('batch_size = %d' % args.batch_size)
     logging.info('negative_adversarial_sampling = %d' % args.negative_adversarial_sampling)
     logging.info('hidden_dim = %d' % args.hidden_dim)

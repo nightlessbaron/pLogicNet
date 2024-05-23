@@ -18,7 +18,7 @@ kge_lr = 0.001
 kge_iters = 10000
 kge_tbatch = 16
 kge_reg = 0.0
-kge_topk = 100
+kge_topk = 150
 
 if dataset.split('/')[-1] in ['kinship', 'umls', 'nations']:
     kge_batch, kge_neg, kge_dim, kge_gamma, kge_alpha, kge_lr, kge_iters, kge_tbatch = 512, 1024, 500, 6.0, 0.5, 0.00005, 80000, 8
@@ -132,6 +132,7 @@ def save_cmd(save_path):
         fo.write('weight: {}\n'.format(weight))
 
 time = str(datetime.datetime.now()).replace(' ', '_')
+# time = dataset.split("/")[-1] + "_head_v2"
 path = path + '/' + time
 ensure_dir(path)
 save_cmd('{}/cmd.txt'.format(path))
@@ -151,7 +152,7 @@ for k in range(iterations):
     os.system('cp {}/hidden.txt {}/hidden.txt'.format(path, workspace_path))
     os.system(cmd_kge(workspace_path, kge_model))
 
-    os.system(cmd_mln(path, workspace_path, preprocessing=True))
+    os.system(cmd_mln(path, workspace_path, preprocessing=False))
     augment_triplet('{}/pred_mln.txt'.format(workspace_path), '{}/train.txt'.format(path), '{}/train_augmented.txt'.format(workspace_path), mln_threshold_of_triplet)
     os.system('cp {}/train_augmented.txt {}/train_augmented.txt'.format(workspace_path, path))
 
